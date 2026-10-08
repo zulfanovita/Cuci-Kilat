@@ -1,0 +1,65 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Tugas mandiri: satu peran, tanpa authentication (ditunda ke sesi berikutnya).
+    function isInt(v) { return v is int; }
+
+    match /layanan/{id} {
+      function ok(d) {
+        return d.keys().hasOnly(['nama','harga_per_kg','estimasi_hari','dibuat_pada'])
+          && d.nama is string && d.nama.size() >= 1 && d.nama.size() <= 40
+          && isInt(d.harga_per_kg) && d.harga_per_kg >= 0
+          && isInt(d.estimasi_hari) && d.estimasi_hari >= 1 && d.estimasi_hari <= 7;
+      }
+      allow read: if true;
+      allow create: if ok(request.resource.data) && request.resource.data.dibuat_pada == request.time;
+      allow update: if ok(request.resource.data) && request.resource.data.dibuat_pada == resource.data.dibuat_pada;
+      allow delete: if true;
+    }
+
+    match /pelanggan/{id} {
+      function ok(d) {
+        return d.keys().hasOnly(['nama','no_whatsapp','alamat','dibuat_pada'])
+          && d.nama is string && d.nama.size() >= 1 && d.nama.size() <= 60
+          && d.alamat is string && d.alamat.size() >= 1 && d.alamat.size() <= 200
+          && d.no_whatsapp is string && d.no_whatsapp == id
+          && d.no_whatsapp.matches('^08[0-9]{8,11}$');
+      }
+      allow read: if true;
+      allow create: if ok(request.resource.data) && request.resource.data.dibuat_pada == request.time;
+      allow update: if ok(request.resource.data) && request.resource.data.dibuat_pada == resource.data.dibuat_pada;
+      allow delete: if true;
+    }
+
+    match /order/{id} {
+      function validNext(a, b) {
+        return (a == 'diterima' && (b == 'dicuci' || b == 'dibatalkan'))
+          || (a == 'dicuci' && b == 'selesai')
+          || (a == 'selesai' && b == 'diambil');
+      }
+      function okCreate(d) {
+        return d.keys().hasOnly(['pelanggan_id','nama_pelanggan','layanan_id','nama_layanan','harga_per_kg',
+                                 'berat_kg','total','status','catatan','tanggal_masuk','dibuat_pada'])
+          && d.keys().hasAll(['pelanggan_id','nama_pelanggan','layanan_id','nama_layanan','harga_per_kg',
+                              'berat_kg','total','status','tanggal_masuk','dibuat_pada'])
+          && d.pelanggan_id is string && d.nama_pelanggan is string && d.nama_layanan is string
+          && exists(/databases/$(database)/documents/pelanggan/$(d.pelanggan_id))
+          && isInt(d.berat_kg) && d.berat_kg >= 1 && d.berat_kg <= 50
+          && isInt(d.harga_per_kg)
+          && d.harga_per_kg == get(/databases/$(database)/documents/layanan/$(d.layanan_id)).data.harga_per_kg
+          && d.nama_layanan == get(/databases/$(database)/documents/layanan/$(d.layanan_id)).data.nama
+          && d.total == d.harga_per_kg * d.berat_kg
+          && d.status == 'diterima'
+          && (!('catatan' in d) || (d.catatan is string && d.catatan.size() <= 100))
+          && d.tanggal_masuk is string && d.tanggal_masuk.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+          && d.dibuat_pada == request.time;
+      }
+      allow read: if true;
+      allow create: if okCreate(request.resource.data);
+      allow update: if request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status'])
+                    && validNext(resource.data.status, request.resource.data.status);
+      allow delete: if resource.data.status in ['diterima','dibatalkan'];
+    }
+  }
+}
